@@ -1,0 +1,36 @@
+name: Build Clash Party Windows installer
+
+on:
+  push:
+    branches: [codex/clash-party-windows-build]
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 12.15.0
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24.22.1
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Test proxy discovery and Mihomo controller selection
+        run: pnpm exec vp test --project unit apps/desktop/src/main/forced-proxy.test.ts apps/desktop/src/main/mihomo-config.test.ts
+      - name: Build Windows installer
+        run: pnpm exec vp run package:desktop
+      - name: Verify installed Windows application
+        run: node apps/desktop/scripts/verify-windows-package.mjs
+      - uses: actions/upload-artifact@v7
+        with:
+          name: clash-party-windows-x64
+          path: apps/desktop/release/IP-Guard-Setup-*.exe
+          if-no-files-found: error
