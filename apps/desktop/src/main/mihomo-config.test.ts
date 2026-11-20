@@ -79,6 +79,10 @@ describe("Mihomo private route", () => {
       { hosts: ["127.0.0.1", "::1"] },
     );
     const pipe = String.raw`\\.\pipe\verge-mihomo`;
+    expect(mihomoController({ ...profile, "external-controller-pipe": "ignored" }, pipe)).toEqual({
+      kind: "pipe",
+      path: pipe,
+    });
     expect(mihomoController({ ...profile, "external-controller-pipe": pipe })).toEqual({
       kind: "pipe",
       path: pipe,

@@ -13,7 +13,7 @@ import {
 } from "./mihomo-config.ts";
 import type { MihomoController, MihomoProfile } from "./mihomo-config.ts";
 
-type Source = { executable: string; config: string; home?: string; pid: number };
+type Source = { config: string; home?: string; controllerPipe?: string };
 export class MihomoResolver {
   groups: string[] = [];
   reservedPorts: number[] = [];
@@ -39,10 +39,10 @@ export class MihomoResolver {
   }
   private async api(
     profile: MihomoProfile,
+    controller: MihomoController,
     apiPath: string,
     owner: (controller: MihomoController) => Promise<void>,
   ): Promise<unknown> {
-    const controller = mihomoController(profile);
     try {
       await owner(controller);
     } catch {
@@ -133,12 +133,13 @@ export class MihomoResolver {
   ) {
     const profile = await this.profile(source.config);
     this.reservedPorts = mihomoReservedPorts(profile);
+    const controller = mihomoController(profile, source.controllerPipe);
     const version = z
       .object({ meta: z.literal(true) })
-      .safeParse(await this.api(profile, "/version", owner));
+      .safeParse(await this.api(profile, controller, "/version", owner));
     if (!version.success)
       throw new Error("该进程未提供 Mihomo Meta API，请使用受支持的 Mihomo 核心。");
-    const api = mihomoApiSchema.parse(await this.api(profile, "/proxies", owner));
+    const api = mihomoApiSchema.parse(await this.api(profile, controller, "/proxies", owner));
     this.groups = profile["proxy-groups"]
       .map((group) => group.name)
       .filter((name) => api.proxies[name]?.now);

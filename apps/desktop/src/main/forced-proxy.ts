@@ -31,6 +31,7 @@ const sourceSchema = z.object({
   executable: z.string(),
   config: z.string(),
   home: z.string().optional(),
+  controllerPipe: z.string().min(1).optional(),
   pid: z.number().int().positive(),
 });
 const ownerSchema = z.object({ executable: z.string().min(1), pid: z.number().int().positive() });
@@ -109,12 +110,18 @@ if($process.Name -match '^(mihomo(?:-.+)?|verge-mihomo(?:-.+)?|clash(?:-meta|\.m
   $f=[regex]::Matches($process.CommandLine,'(?i)(?:^|\s)-f(?:=|\s+)(?:"([^"]+)"|(\S+))')
   $d=[regex]::Matches($process.CommandLine,'(?i)(?:^|\s)-d(?:=|\s+)(?:"([^"]+)"|(\S+))')
   if($f.Count -gt 1 -or $d.Count -gt 1) {throw 'Ambiguous Mihomo configuration'}
-  $home=if($d.Count -eq 1){if($d[0].Groups[1].Success){$d[0].Groups[1].Value}else{$d[0].Groups[2].Value}}else{''}
-  if($home -and $home -notmatch '^[A-Za-z]:[\\/]'){throw 'Mihomo home must be a local absolute path'}
-  $file=if($f.Count -eq 1){if($f[0].Groups[1].Success){$f[0].Groups[1].Value}else{$f[0].Groups[2].Value}}elseif($home){Join-Path $home 'config.yaml'}else{throw 'Explicit Mihomo configuration required'}
+  $mihomoHome=if($d.Count -eq 1){if($d[0].Groups[1].Success){$d[0].Groups[1].Value}else{$d[0].Groups[2].Value}}else{''}
+  if($mihomoHome -and $mihomoHome -notmatch '^[A-Za-z]:[\\/]'){throw 'Mihomo home must be a local absolute path'}
+  $file=if($f.Count -eq 1){if($f[0].Groups[1].Success){$f[0].Groups[1].Value}else{$f[0].Groups[2].Value}}elseif($mihomoHome){Join-Path $mihomoHome 'config.yaml'}else{throw 'Explicit Mihomo configuration required'}
   if($file -notmatch '^[A-Za-z]:[\\/]'){throw 'Mihomo -f must use a local absolute path; relative files depend on the process working directory'}
   if(-not (Test-Path -LiteralPath $file -PathType Leaf)){throw 'Mihomo configuration missing'}
-  @{executable=$process.ExecutablePath;config=[IO.Path]::GetFullPath($file);home=$home;pid=[int]$process.ProcessId}|ConvertTo-Json -Compress
+  $pipes=[regex]::Matches($process.CommandLine,'(?i)(?:^|\s)-ext-ctl-pipe(?:=|\s+)(?:"([^"]*)"|([^"\s]+))')
+  if($pipes.Count -gt 1) {throw 'Ambiguous Mihomo controller pipe'}
+  $source=@{executable=$process.ExecutablePath;config=[IO.Path]::GetFullPath($file);home=$mihomoHome;pid=[int]$process.ProcessId}
+  if($pipes.Count -eq 1) {
+    $source.controllerPipe=if($pipes[0].Groups[1].Success){$pipes[0].Groups[1].Value}else{$pipes[0].Groups[2].Value}
+  }
+  $source | ConvertTo-Json -Compress
   exit 0
 }
 if($process.Name -notin @('xray.exe','sing-box.exe')) { throw 'Unsupported proxy core' }

@@ -18,8 +18,11 @@ export type MihomoProfile = z.infer<typeof mihomoProfileSchema>;
 export type MihomoController =
   | { kind: "tcp"; port: number; hosts: ("127.0.0.1" | "::1")[] }
   | { kind: "pipe"; path: string };
-export function mihomoController(profile: MihomoProfile): MihomoController {
-  const pipe = profile["external-controller-pipe"];
+export function mihomoController(
+  profile: MihomoProfile,
+  controllerPipe?: string,
+): MihomoController {
+  const pipe = controllerPipe ?? profile["external-controller-pipe"];
   if (pipe !== undefined && pipe !== "") {
     if (
       typeof pipe !== "string" ||
