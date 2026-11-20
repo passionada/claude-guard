@@ -26,7 +26,11 @@ jobs:
       - name: Test proxy discovery and Mihomo controller selection
         run: pnpm exec vp test --project unit apps/desktop/src/main/forced-proxy.test.ts apps/desktop/src/main/mihomo-config.test.ts
       - name: Build Windows installer
-        run: pnpm exec vp run package:desktop
+        shell: powershell
+        run: |
+          # The packaging scripts spawn Windows PowerShell for archive operations.
+          $env:PSModulePath = Join-Path $PSHOME 'Modules'
+          pnpm exec vp run package:desktop
       - name: Verify installed Windows application
         run: node apps/desktop/scripts/verify-windows-package.mjs
       - uses: actions/upload-artifact@v7
