@@ -22,14 +22,26 @@ namespace IpGuard {
         public EgressPolicy enhancementPolicy;
     }
     public static class LaunchGate {
-        sealed class Lease : IDisposable {
+        internal sealed class Lease : IDisposable {
+            internal const int TimeoutMilliseconds=10000;
             readonly object sync=new object();
             long verified=Stopwatch.GetTimestamp();
             public IntPtr job;
             public volatile bool stopped;
             public Lease(IntPtr handle) { job=handle; }
-            public bool Alive() { return !stopped && Stopwatch.GetTimestamp()-Interlocked.Read(ref verified)<Stopwatch.Frequency*1.8; }
-            public void Begin(StreamReader reader) { Interlocked.Exchange(ref verified,Stopwatch.GetTimestamp()); Task.Run(()=>Read(reader)); }
+            internal double HeartbeatAgeMilliseconds {get {return (Stopwatch.GetTimestamp()-Interlocked.Read(ref verified))*1000.0/Stopwatch.Frequency;}}
+            public bool Alive() { return !stopped && HeartbeatAgeMilliseconds<TimeoutMilliseconds; }
+            public void RequireAlive() {
+                if(stopped) throw new IOException("守护连接已关闭，受保护程序已结束。");
+                long age=(long)HeartbeatAgeMilliseconds;
+                if(age<TimeoutMilliseconds) return;
+                using(Process current=Process.GetCurrentProcess()) throw new TimeoutException("守护连接超时，受保护程序已结束。（门卫 PID "+current.Id+"，上次心跳 "+age+" 毫秒前，阈值 "+TimeoutMilliseconds+" 毫秒）");
+            }
+            public void Begin(StreamReader reader) {
+                Interlocked.Exchange(ref verified,Stopwatch.GetTimestamp());
+                // A live session owns a blocking read for its entire lifetime.
+                Task.Factory.StartNew(()=>Read(reader),CancellationToken.None,TaskCreationOptions.LongRunning,TaskScheduler.Default);
+            }
             void Read(StreamReader reader) {
                 try { string line; while((line=reader.ReadLine())=="lease") Interlocked.Exchange(ref verified,Stopwatch.GetTimestamp()); }
                 catch(IOException) { }
@@ -90,7 +102,7 @@ namespace IpGuard {
             catch(ArgumentException) { return false; }
         }
         static int Execute(string[] args,bool packaged,LaunchWindow window,bool inherited,ModelEvidence modelEvidence) {
-            Win32.ProcessInfo info=new Win32.ProcessInfo(); string ip=""; string[] expected=new string[0]; bool processOwned=false;
+            Win32.ProcessInfo info=new Win32.ProcessInfo(); string ip=""; string[] expected=new string[0]; bool processOwned=false,launched=false;
             try {
                 if(args.Length<(packaged ? 6 : 4)) throw new Exception("启动参数无效。");
                 string sid=packaged ? SystemPolicy.Sid : args[1], id=packaged ? args[1] : args[2]; Guid parsed;
@@ -154,9 +166,10 @@ namespace IpGuard {
                                 if(window!=null ? !window.WaitForRelease(lease.Alive) : !lease.Alive()) throw new Exception("启动许可已撤销，程序保持停止。");
                                 TerminalProcess.MarkStarted();
                                 if(Win32.ResumeThread(info.thread)==UInt32.MaxValue) throw new Exception("恢复目标进程失败。");
+                                launched=true;
                                 try {MonitorProcess(info,lease,result.commandProtection);}
                                 catch(Exception error) {
-                                    if(result.commandProtection) try {writer.WriteLine(Data.Json().Serialize(new {type="command-blocked",error=error.GetBaseException().Message}));} catch(IOException) {}
+                                    try {writer.WriteLine(Data.Json().Serialize(new {type="command-blocked",error=error.GetBaseException().Message}));} catch(IOException) {}
                                     throw;
                                 }
                                 uint exitCode; Win32.Check(Win32.GetExitCodeProcess(info.process,out exitCode)); return exitCode==259 ? 1 : unchecked((int)exitCode);
@@ -165,14 +178,14 @@ namespace IpGuard {
                         }
                     } finally { if(window!=null) window.CancelRequested-=cancel; else TerminalProcess.UnbindCancel(); }
                 }
-            } catch(Exception error) { if(window!=null) window.Block(error.GetBaseException().Message,ip,expected,error.GetBaseException() is FirewallDisabledException); else Console.Error.WriteLine("IP Guard · "+error.GetBaseException().Message); return 1; }
+            } catch(Exception error) { if(window!=null && !launched) window.Block(error.GetBaseException().Message,ip,expected,error.GetBaseException() is FirewallDisabledException); else Console.Error.WriteLine("IP Guard · "+error.GetBaseException().Message); return 1; }
             finally {
                 if(processOwned) { Win32.TerminateProcess(info.process,1); Win32.CloseHandle(info.thread); Win32.CloseHandle(info.process); }
                 if(window!=null) window.End();
             }
         }
         static void MonitorProcess(Win32.ProcessInfo info,Lease lease,bool protectChildren) {
-            DebugProcessTree.Run(info,lease.job,()=>!lease.stopped,lease.Alive,protectChildren);
+            DebugProcessTree.Run(info,lease.job,()=>!lease.stopped,lease.RequireAlive,protectChildren);
         }
     }
 }
